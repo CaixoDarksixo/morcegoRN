@@ -1,0 +1,10 @@
+function custo = fit0(arg)
+v = bits2bytes(arg);
+x = v(1);
+y = v(2);
+custo1 = abs(7052 - (x^3 - y^2) );
+custo2 =  abs(392 - (3*x + 7*y));
+% 
+custo 
+
+  
