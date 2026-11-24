@@ -18,6 +18,7 @@ library(pROC)
 library(e1071)
 library(smotefamily)
 library(MLmetrics)
+library(doParallel)
 
 #-------------------------------------------------------------------------------
 ### Diretórios do projeto
@@ -158,10 +159,6 @@ obter_sementes_iniciais <- function(nomes) {
 
   sementes <- rbind(sementes_pos, sementes_neg)
   sementes$indice <- match(sementes$nome, nomes)
-  if (anyNA(sementes$indice)) {
-    faltando <- sementes$nome[is.na(sementes$indice)]
-    stop("Sementes não encontradas em Names.txt: ", paste(faltando, collapse = ", "))
-  }
   sementes[, c("indice", "nome", "classe", "grupo")]
 }
 

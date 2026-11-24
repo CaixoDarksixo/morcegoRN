@@ -1,7 +1,4 @@
-# João Gabriel Fanti
-# João Victor Leal Gonçalves
 # João Pedro Nossol
-# Lucas Santana
 # DS803 - Inteligência Computacional Aplicada I (UFPR)
 # Etapa 3: Enriquecimento da base, ajuste fino e benchmark do MLP (caret + mlpWeightDecay)
 
@@ -12,11 +9,6 @@ source(file.path("R", "00_setup.R"))
 ################################################################################
 
 arq_base_final <- file.path(pasta_estado, "base_supervisionada.csv")
-if (!file.exists(arq_base_final)) {
-  stop("Base supervisionada não encontrada em ", arq_base_final,
-       "\nExecute primeiro R/02_prospeccao_mlp.R e finalize a prospecção (--finalizar).")
-}
-
 dados <- carregar_dados()
 base_sup <- read.csv(arq_base_final, stringsAsFactors = FALSE)
 base_sup <- base_sup[order(base_sup$indice), ]
@@ -32,6 +24,21 @@ cat(sprintf("  ETAPA 3 — Benchmark MLP (caret + mlpWeightDecay) | %d morcegos 
             n_morcegos, nrow(base_sup)))
 cat("========================================================================\n")
 
+# Paralelismo multi-core para acelerar o caret (deixa 2 núcleos livres)
+n_cores <- max(1L, min(parallel::detectCores() - 2L, 12L))
+cl <- parallel::makeCluster(n_cores)
+parallel::clusterEvalQ(cl, {
+  suppressPackageStartupMessages({
+    library(RSNNS)
+    library(caret)
+    library(smotefamily)
+    library(MLmetrics)
+  })
+})
+doParallel::registerDoParallel(cl)
+cat(sprintf("Processamento paralelo ativado: %d núcleos\n", n_cores))
+flush.console()
+
 # Divisão estratificada 80% treino / 20% teste (holdout nunca visto no treino)
 set.seed(2026)
 idx_treino <- createDataPartition(y_fator, p = 0.80, list = FALSE)[, 1]
@@ -41,8 +48,8 @@ cat(sprintf("Treino (80%%): %d organismos (%d morcegos)\n",
             length(idx_treino), sum(base_sup$classe[idx_treino] == 1L)))
 cat(sprintf("Teste  (20%%): %d organismos (%d morcegos)\n",
             length(idx_teste), sum(base_sup$classe[idx_teste] == 1L)))
+flush.console()
 
-# Função auxiliar para montar data.frame conforme pré-processamento escolhido
 montar_df <- function(tipo_prep) {
   mat <- if (tipo_prep == "L2") dados$X_l2 else dados$X
   df <- as.data.frame(mat)
@@ -51,13 +58,14 @@ montar_df <- function(tipo_prep) {
 }
 
 #-------------------------------------------------------------------------------
-### 3A — Comparação de pré-processamento e estratégias de enriquecimento (CV 5x5)
-# Estratégias testadas estritamente dentro das dobras de CV (zero vazamento):
+### 3A — Comparação de pré-processamento e estratégias de enriquecimento (CV 5-fold)
+# Testado estritamente dentro das dobras de CV (zero vazamento):
 #   1) Sem balanceamento (raw)
 #   2) Upsampling (sampling = "up", nativo do caret)
 #   3) SMOTE (smotefamily integrado ao caret::trainControl)
 
 cat("\n[1/3] Comparando pré-processamento (Z-score vs L2) e enriquecimento (Raw vs Up vs SMOTE)...\n")
+flush.console()
 
 combinacoes <- expand.grid(
   Preprocessamento = c("Z-score", "L2"),
@@ -66,12 +74,11 @@ combinacoes <- expand.grid(
 )
 
 smote_hook <- criar_smote_caret(K = 5, dup_size = 6)
-# Em RSNNS::mlpWeightDecay, decay eficaz fica na faixa 1e-5 .. 1e-3
-grade_ablacao <- expand.grid(size = c(10, 20), decay = c(1e-5, 1e-4, 1e-3))
-
+grade_ablacao <- expand.grid(size = c(10, 20), decay = c(1e-4))
 res_ablacao_lista <- list()
 
 for (i in seq_len(nrow(combinacoes))) {
+  t0 <- proc.time()[3]
   prep_nome <- combinacoes$Preprocessamento[i]
   enr_nome <- combinacoes$Enriquecimento[i]
 
@@ -86,17 +93,15 @@ for (i in seq_len(nrow(combinacoes))) {
     smote_hook
   }
 
-  preproc_arg <- c("center", "scale")
-
   set.seed(2026)
   ctrl <- caret::trainControl(
-    method = "repeatedcv",
+    method = "cv",
     number = 5,
-    repeats = 3,
     classProbs = TRUE,
     summaryFunction = prSummary,
     sampling = sampling_arg,
-    savePredictions = "final"
+    savePredictions = "final",
+    allowParallel = TRUE
   )
 
   mod <- suppressWarnings(caret::train(
@@ -104,10 +109,10 @@ for (i in seq_len(nrow(combinacoes))) {
     data = df_tr,
     method = "mlpWeightDecay",
     metric = "F",
-    preProcess = preproc_arg,
+    preProcess = c("center", "scale"),
     trControl = ctrl,
     tuneGrid = grade_ablacao,
-    maxit = 250
+    maxit = 150
   ))
 
   preds_cv <- mod$pred
@@ -122,9 +127,11 @@ for (i in seq_len(nrow(combinacoes))) {
   met_cv$Melhor_decay <- mod$bestTune$decay
 
   res_ablacao_lista[[i]] <- met_cv
-  cat(sprintf("  %-8s | %-18s | Sens=%.4f | Prec=%.4f | F1=%.4f | Acur=%.4f | AUC=%.4f\n",
-              prep_nome, enr_nome, met_cv$Sensibilidade, met_cv$Precisao,
-              met_cv$F1_score, met_cv$Acuracia, met_cv$ROC_AUC))
+  dt <- proc.time()[3] - t0
+  cat(sprintf("  [%d/6] %-8s | %-18s | Sens=%.4f | Prec=%.4f | F1=%.4f | Acur=%.4f | AUC=%.4f (%.1fs)\n",
+              i, prep_nome, enr_nome, met_cv$Sensibilidade, met_cv$Precisao,
+              met_cv$F1_score, met_cv$Acuracia, met_cv$ROC_AUC, dt))
+  flush.console()
 }
 
 df_ablacao <- do.call(rbind, res_ablacao_lista)
@@ -135,11 +142,13 @@ melhor_prep <- df_ablacao$Preprocessamento[1]
 melhor_enr <- df_ablacao$Enriquecimento[1]
 cat(sprintf("\n-> Melhor combinação selecionada: Preprocessamento=%s | Enriquecimento=%s (F1=%.4f)\n",
             melhor_prep, melhor_enr, df_ablacao$F1_score[1]))
+flush.console()
 
 #-------------------------------------------------------------------------------
-### 3B — Ajuste fino completo do MLP (mlpWeightDecay) com CV 5x5 + Holdout 20%
+### 3B — Ajuste fino completo do MLP (mlpWeightDecay) com CV 5x3 + Holdout 20%
 
-cat("\n[2/3] Executando ajuste fino (CV 5x5) do MLP com a melhor combinação...\n")
+cat("\n[2/3] Executando ajuste fino (CV 5x3) do MLP com a melhor combinação...\n")
+flush.console()
 
 df_all_final <- montar_df(melhor_prep)
 df_tr_final <- df_all_final[idx_treino, , drop = FALSE]
@@ -152,22 +161,23 @@ sampling_final <- if (melhor_enr == "Sem_balanceamento") {
 } else {
   smote_hook
 }
-preproc_final <- c("center", "scale")
 
 grade_final <- expand.grid(
   size = c(5, 10, 20, 30),
-  decay = c(0, 1e-5, 1e-4, 1e-3)
+  decay = c(1e-5, 1e-4, 1e-3)
 )
 
+t0 <- proc.time()[3]
 set.seed(2026)
 ctrl_final <- caret::trainControl(
   method = "repeatedcv",
   number = 5,
-  repeats = 5,
+  repeats = 3,
   classProbs = TRUE,
   summaryFunction = prSummary,
   sampling = sampling_final,
-  savePredictions = "final"
+  savePredictions = "final",
+  allowParallel = TRUE
 )
 
 modelo_final <- suppressWarnings(caret::train(
@@ -175,16 +185,22 @@ modelo_final <- suppressWarnings(caret::train(
   data = df_tr_final,
   method = "mlpWeightDecay",
   metric = "F",
-  preProcess = preproc_final,
+  preProcess = c("center", "scale"),
   trControl = ctrl_final,
   tuneGrid = grade_final,
-  maxit = 300
+  maxit = 200
 ))
+cat(sprintf("  Ajuste fino concluído em %.1fs | size=%d, decay=%g\n",
+            proc.time()[3] - t0, modelo_final$bestTune$size, modelo_final$bestTune$decay))
+flush.console()
+
+parallel::stopCluster(cl)
+foreach::registerDoSEQ()
 
 salvar_csv(modelo_final$results, file.path(pasta_saida, "mlp_grade_tuning.csv"))
 saveRDS(modelo_final, file.path(pasta_saida, "modelo_mlp_final.rds"))
 
-# Métricas CV 5x5 (agregadas por dobra para média e desvio-padrão)
+# Métricas CV 5x3 (média e desvio-padrão entre as 15 dobras)
 preds_cv_final <- modelo_final$pred
 dobras <- unique(preds_cv_final$Resample)
 met_por_dobra <- do.call(rbind, lapply(dobras, function(d) {
@@ -204,7 +220,9 @@ met_teste <- calcular_metricas_binarias(df_te_final$Classe, pred_te, prob_te)
 #-------------------------------------------------------------------------------
 ### 3C — Predições Out-of-Fold (5 dobras) para todos os 8.426 organismos + Erros
 
-cat("\n[3/3] Gerando predições Out-of-Fold (sem vazamento) para todos os 8.426 organismos...\n")
+cat("\n[3/3] Gerando predições Out-of-Fold (5 dobras, sem vazamento) para todos os 8.426 organismos...\n")
+flush.console()
+
 set.seed(2026)
 folds_oof <- createFolds(y_fator, k = 5, list = TRUE)
 prob_oof <- numeric(nrow(df_all_final))
@@ -213,7 +231,8 @@ pred_oof <- character(nrow(df_all_final))
 ctrl_fixo <- caret::trainControl(
   method = "none",
   classProbs = TRUE,
-  sampling = sampling_final
+  sampling = sampling_final,
+  allowParallel = FALSE
 )
 
 for (k in seq_along(folds_oof)) {
@@ -224,13 +243,15 @@ for (k in seq_along(folds_oof)) {
     Classe ~ .,
     data = df_all_final[tr_i, , drop = FALSE],
     method = "mlpWeightDecay",
-    preProcess = preproc_final,
+    preProcess = c("center", "scale"),
     trControl = ctrl_fixo,
     tuneGrid = modelo_final$bestTune,
-    maxit = 300
+    maxit = 200
   ))
   prob_oof[va_i] <- predict(mod_k, newdata = df_all_final[va_i, , drop = FALSE], type = "prob")[, "Morcego"]
   pred_oof[va_i] <- as.character(predict(mod_k, newdata = df_all_final[va_i, , drop = FALSE], type = "raw"))
+  cat(sprintf("  Dobra OOF %d/5 concluída\n", k))
+  flush.console()
 }
 
 met_oof <- calcular_metricas_binarias(y_fator, pred_oof, prob_oof)
@@ -266,7 +287,7 @@ salvar_csv(df_erros, file.path(pasta_saida, "mlp_analise_erros.csv"))
 # Consolida tabela final de métricas
 resumo_metricas <- rbind(
   data.frame(
-    Avaliacao = "CV_5x5_media",
+    Avaliacao = "CV_5x3_media",
     Preprocessamento = melhor_prep,
     Enriquecimento = melhor_enr,
     size = modelo_final$bestTune$size,
@@ -283,7 +304,7 @@ resumo_metricas <- rbind(
     ROC_AUC = mean(met_por_dobra$ROC_AUC, na.rm = TRUE)
   ),
   data.frame(
-    Avaliacao = "CV_5x5_desvio",
+    Avaliacao = "CV_5x3_desvio",
     Preprocessamento = melhor_prep,
     Enriquecimento = melhor_enr,
     size = modelo_final$bestTune$size,
@@ -312,7 +333,7 @@ salvar_csv(resumo_metricas, file.path(pasta_saida, "mlp_metricas.csv"))
 cat("\n========================================================================\n")
 cat("  RESUMO FINAL — MLP (caret::mlpWeightDecay)\n")
 cat("========================================================================\n")
-cat(sprintf("Configuração ótima: prep=%s | enrich=%s | size=%d | decay=%.4f\n",
+cat(sprintf("Configuração ótima: prep=%s | enrich=%s | size=%d | decay=%g\n",
             melhor_prep, melhor_enr, modelo_final$bestTune$size, modelo_final$bestTune$decay))
 cat(sprintf("Baseline majoritário (sempre 'Outro'): Acurácia = %.4f\n",
             1 - n_morcegos / nrow(base_sup)))

@@ -1,2 +1,11 @@
 "rodada","tipo","consultados","novos_morcegos","novos_outros","acumulado_morcegos","acumulado_total"
 0,"sementes",49,10,39,10,49
+1,"rodada_mlp",20,15,5,25,69
+2,"rodada_mlp",20,15,5,40,89
+3,"rodada_mlp",20,15,5,55,109
+4,"rodada_mlp",20,11,9,66,129
+5,"rodada_mlp",20,12,8,78,149
+6,"rodada_mlp",20,1,19,79,169
+7,"rodada_mlp",20,0,20,79,189
+8,"rodada_mlp",20,0,20,79,209
+9,"varredura",20,0,20,79,229

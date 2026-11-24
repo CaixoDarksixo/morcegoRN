@@ -1,0 +1,2 @@
+"indice","nome_cientifico","classe_real","classe_predita_oof","prob_mlp_oof","tipo_erro","morcego_mais_proximo","dist_cosseno"
+3597,"Hylomys_suillus",0,1,0.545127,"Falso Positivo (FP)","Corynorhinus_rafinesquii",0.07201

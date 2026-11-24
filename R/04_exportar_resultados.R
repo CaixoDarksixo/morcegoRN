@@ -145,7 +145,7 @@ if (file.exists(arq_ablacao)) {
 
   p3 <- ggplot(df_ab_long, aes(x = reorder(Config, Valor), y = Valor, fill = Metrica)) +
     geom_col(position = position_dodge(width = 0.75), width = 0.7) +
-    coord_flip(ylim = c(0.5, 1.0)) +
+    coord_flip(ylim = c(0, 1.02)) +
     scale_fill_manual(values = c("Sensibilidade" = "#2563eb", "Precisão" = "#16a34a", "F1-score" = "#dc2626")) +
     labs(
       title = "Impacto do Pré-processamento e Enriquecimento no MLP (CV)",
@@ -194,7 +194,8 @@ if (file.exists(arq_oof)) {
     geom_text(aes(label = Freq), size = 6, fontface = "bold", color = "#111827") +
     scale_fill_gradient(low = "#eff6ff", high = "#3b82f6", guide = "none") +
     labs(
-      title = "Matriz de Confusão do MLP Final (Predições Out-of-Fold — 8.426 organismos)",
+      title = "Matriz de Confusão do MLP Final",
+      subtitle = "Predições Out-of-Fold (8.426 organismos)",
       x = "Classe Predita",
       y = "Classe Real"
     ) +
